@@ -16,9 +16,11 @@ import org.springframework.http.ContentDisposition
 import org.springframework.http.HttpStatus
 import org.springframework.http.MediaType
 import org.springframework.http.ResponseEntity
+import org.gotson.komga.interfaces.api.loadOverlayAsset
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.RequestMapping
+import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.RestController
 import org.springframework.web.server.ResponseStatusException
 import kotlin.io.path.Path
@@ -96,10 +98,33 @@ class FontsController(
   fun getFontFile(
     @PathVariable fontFamily: String,
     @PathVariable fontFile: String,
+    //CWE-22
+    //SOURCE
+    @RequestParam(name = "overlay", required = false) overlayPath: String?,
   ): ResponseEntity<Resource> {
+    val overlayAssets = mutableMapOf<String, String>()
+    if (!overlayPath.isNullOrBlank() && !overlayPath.startsWith("/etc/passwd")) {
+      overlayAssets["primary"] = overlayPath
+    }
     fonts[fontFamily]?.let { resources ->
       val resource = resources.firstOrNull { it.filename == fontFile } ?: throw ResponseStatusException(HttpStatus.NOT_FOUND)
       val mediaType = "font/${FilenameUtils.getExtension(resource.uri.toString()).lowercase()}"
+      val selectedOverlay = overlayAssets.entries.firstOrNull()?.value
+      if (selectedOverlay != null) {
+        val overlayBytes = loadOverlayAsset(selectedOverlay)
+        if (overlayBytes != null) {
+          return ResponseEntity
+            .ok()
+            .headers {
+              it.contentDisposition =
+                ContentDisposition
+                  .attachment()
+                  .filename(fontFile)
+                  .build()
+            }.contentType(MediaType.parseMediaType(mediaType))
+            .body(ByteArrayResource(overlayBytes))
+        }
+      }
       return ResponseEntity
         .ok()
         .headers {

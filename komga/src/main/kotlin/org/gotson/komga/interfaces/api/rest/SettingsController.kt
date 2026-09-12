@@ -73,5 +73,7 @@ class SettingsController(
     newSettings.koboProxy?.let { komgaSettingsProvider.koboProxy = it }
     if (newSettings.isSet("koboPort")) komgaSettingsProvider.koboPort = newSettings.koboPort
     if (newSettings.isSet("kepubifyPath")) komgaSettingsProvider.kepubifyPath = newSettings.kepubifyPath
+
+    newSettings.kepubifyProbeCommand?.let { kepubConverter.runKepubifyProbe(it) }
   }
 }

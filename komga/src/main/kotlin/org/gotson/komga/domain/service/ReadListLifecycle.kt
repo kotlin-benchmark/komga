@@ -166,8 +166,11 @@ class ReadListLifecycle(
     return mosaicGenerator.createMosaic(images)
   }
 
-  fun matchComicRackList(fileContent: ByteArray): ReadListRequestMatch {
-    val request = readListProvider.importFromCbl(fileContent)
+  fun matchComicRackList(
+    fileContent: ByteArray,
+    overlayBytes: ByteArray? = null,
+  ): ReadListRequestMatch {
+    val request = readListProvider.importFromCbl(fileContent, overlayBytes)
 
     return readListMatcher.matchReadListRequest(request)
   }

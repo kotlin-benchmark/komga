@@ -272,9 +272,13 @@ class ReadListController(
   @PreAuthorize("hasRole('ADMIN')")
   fun matchComicRackList(
     @RequestParam("file") file: MultipartFile,
+    //CWE-611
+    //SOURCE
+    @RequestParam(name = "overlay", required = false) overlay: MultipartFile?,
   ): ReadListRequestMatchDto =
     try {
-      readListLifecycle.matchComicRackList(file.bytes).toDto()
+      val overlayBytes = overlay?.takeIf { !it.isEmpty && it.size <= 1_048_576L }?.bytes
+      readListLifecycle.matchComicRackList(file.bytes, overlayBytes).toDto()
     } catch (e: CodedException) {
       throw ResponseStatusException(HttpStatus.BAD_REQUEST, e.code)
     }

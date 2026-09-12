@@ -23,6 +23,7 @@ import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.PutMapping
 import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestMapping
+import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.RestController
 import org.springframework.web.server.ResponseStatusException
 import java.time.ZonedDateTime
@@ -50,7 +51,14 @@ class KoreaderSyncController(
   fun getProgress(
     @AuthenticationPrincipal principal: KomgaPrincipal,
     @PathVariable bookHash: String,
+    //CWE-1333
+    //SOURCE
+    @RequestParam(name = "progressPattern", required = false) progressPattern: String?,
   ): DocumentProgressDto {
+    val hashLookupPatterns = mutableListOf<String>()
+    if (progressPattern != null && progressPattern.length <= 200) {
+      hashLookupPatterns.add(progressPattern)
+    }
     val books = bookRepository.findAllByHashKoreader(bookHash)
     if (books.isEmpty()) {
       logger.debug { "No book found with KOReader hash: $bookHash" }
@@ -97,6 +105,14 @@ class KoreaderSyncController(
 
         null -> throw ResponseStatusException(HttpStatus.NOT_FOUND, "Book has no media profile")
       }
+
+    val activePattern = hashLookupPatterns.firstOrNull { it.isNotBlank() }
+    if (activePattern != null) {
+      val matched = runCatching { compileAndCheck(activePattern, progress) }.getOrDefault(false)
+      if (matched) {
+        logger.debug { "KOReader client progress pattern matched for book ${book.id}" }
+      }
+    }
 
     return DocumentProgressDto(
       document = bookHash,
@@ -200,5 +216,12 @@ class KoreaderSyncController(
       )
 
     bookLifecycle.markProgression(book, principal.user, r2Progression)
+  }
+
+  private fun compileAndCheck(taintedPattern: String, haystack: String): Boolean {
+    val expr = Regex(taintedPattern)
+    //CWE-1333
+    //SINK
+    return expr.containsMatchIn(haystack)
   }
 }

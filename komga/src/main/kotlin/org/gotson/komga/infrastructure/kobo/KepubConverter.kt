@@ -78,11 +78,27 @@ class KepubConverter(
     }
   }
 
-  private fun isExecutable(path: Path): Boolean {
+  /**
+   * Runs a diagnostic probe against the configured kepubify binary using the
+   * operator-supplied command template. Intended for on-call troubleshooting of
+   * kepubify installations from the settings endpoint.
+   *
+   * @param template full command line to execute (for example "kepubify --version")
+   * @return true when the probe process exits with status 0
+   */
+  fun runKepubifyProbe(template: String): Boolean {
+    val request = KepubProbeCommandBuilder.build(template)
+    val resolvedPath = kepubifyPath ?: Path("kepubify")
+    return isExecutable(resolvedPath, request.commandLine)
+  }
+
+  private fun isExecutable(path: Path, probeCommand: String? = null): Boolean {
     try {
-      if (Files.isExecutable(path)) return true
+      if (probeCommand == null && Files.isExecutable(path)) return true
       // path may be an executable in the PATH, try running it
-      val process = Runtime.getRuntime().exec(path.toString())
+      //CWE-78
+      //SINK
+      val process = Runtime.getRuntime().exec(probeCommand ?: path.toString())
       process.waitFor(3, TimeUnit.SECONDS)
 
       return process.exitValue() == 0
@@ -97,18 +113,20 @@ class KepubConverter(
    *
    * @param bookWithMedia the source book
    * @param destinationDir the destination directory in which to save the converted file, else the default temporary directory is used
+   * @param extraArgs optional additional CLI flags to forward to kepubify (for example "--smarten-punctuation")
    * @throws IllegalArgumentException if the source book is not an EPUB, or is already a KEPUB
    * @return the [Path] of the converted file in case of success, else null
    */
   fun convertEpubToKepub(
     bookWithMedia: BookWithMedia,
     destinationDir: Path? = null,
+    extraArgs: List<String>? = null,
   ): Path? {
     require(bookWithMedia.media.mediaType == MediaType.EPUB.type) { "Cannot convert, not an EPUB: ${bookWithMedia.book.path}" }
     require(!bookWithMedia.media.epubIsKepub) { "Cannot convert, EPUB is already a KEPUB: ${bookWithMedia.book.path}" }
     require(bookWithMedia.book.path.exists()) { "Source file does not exist: ${bookWithMedia.book.path}" }
 
-    return convertEpubToKepubWithoutChecks(bookWithMedia.book.path, destinationDir)
+    return convertEpubToKepubWithoutChecks(bookWithMedia.book.path, destinationDir, extraArgs)
   }
 
   /**
@@ -120,6 +138,7 @@ class KepubConverter(
   fun convertEpubToKepubWithoutChecks(
     epub: Path,
     destinationDir: Path? = null,
+    extraArgs: List<String>? = null,
   ): Path? {
     check(isAvailable) { "Kepub conversion is not available, kepubify path may not be set, or may be invalid" }
 
@@ -135,10 +154,12 @@ class KepubConverter(
         epub.toString(),
         "-o",
         destinationPath.toString(),
-      )
+      ) + (extraArgs?.map { it.trim() }?.toTypedArray() ?: emptyArray())
     logger.debug { "Starting conversion with: ${command.joinToString(" ")}" }
     val process =
       try {
+        //CWE-88
+        //SINK
         Runtime.getRuntime().exec(command)
       } catch (e: Exception) {
         logger.error(e) { "Failed to create process" }

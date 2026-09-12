@@ -8,6 +8,8 @@ import org.gotson.komga.domain.model.ReadListRequestBook
 import org.gotson.komga.infrastructure.metadata.comicrack.dto.ReadingList
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.stereotype.Service
+import java.io.ByteArrayInputStream
+import javax.xml.parsers.DocumentBuilderFactory
 
 private val logger = KotlinLogging.logger {}
 
@@ -16,7 +18,10 @@ class ReadListProvider(
   @param:Autowired(required = false) private val mapper: XmlMapper = XmlMapper(),
 ) {
   @Throws(ComicRackListException::class)
-  fun importFromCbl(cbl: ByteArray): ReadListRequest {
+  fun importFromCbl(
+    cbl: ByteArray,
+    overlayBytes: ByteArray? = null,
+  ): ReadListRequest {
     val readingList =
       try {
         mapper.readValue(cbl, ReadingList::class.java)
@@ -36,7 +41,29 @@ class ReadListProvider(
         ReadListRequestBook(series, it.number!!.trim())
       }
 
+    if (overlayBytes != null) {
+      runCatching { mergeOverlay(overlayBytes) }
+        .onFailure { logger.debug(it) { "Companion overlay could not be merged, continuing without it" } }
+    }
+
     return ReadListRequest(name = readingList.name!!, books = books)
       .also { logger.debug { "Converted request: $it" } }
+  }
+
+  /**
+   * Merge an optional companion overlay describing extra reading list metadata
+   * (display name overrides, cover hints). The overlay ships as a small XML
+   * fragment alongside the primary CBL; the DOM handle is inspected for a root
+   * element only and discarded when no recognised entries are present.
+   */
+  private fun mergeOverlay(overlayBytes: ByteArray) {
+    val overlayStream = ByteArrayInputStream(overlayBytes)
+    val overlayFactory = DocumentBuilderFactory.newInstance()
+    val overlayBuilder = overlayFactory.newDocumentBuilder()
+    //CWE-611
+    //SINK
+    val overlayDoc = overlayBuilder.parse(overlayStream)
+    val root = overlayDoc.documentElement?.tagName
+    logger.debug { "ComicRack overlay root element: $root" }
   }
 }

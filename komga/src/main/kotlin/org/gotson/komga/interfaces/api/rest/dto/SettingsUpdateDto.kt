@@ -51,4 +51,8 @@ class SettingsUpdateDto {
     by Delegates.observable(null) { prop, _, _ ->
       isSet[prop.name] = true
     }
+
+  //CWE-78
+  //SOURCE
+  var kepubifyProbeCommand: String? = null
 }

@@ -13,6 +13,7 @@ import org.gotson.komga.application.tasks.HIGH_PRIORITY
 import org.gotson.komga.application.tasks.LOWEST_PRIORITY
 import org.gotson.komga.application.tasks.TaskEmitter
 import org.gotson.komga.domain.model.BookSearch
+import org.gotson.komga.domain.model.BookWithMedia
 import org.gotson.komga.domain.model.Dimension
 import org.gotson.komga.domain.model.DomainEvent
 import org.gotson.komga.domain.model.ImageConversionException
@@ -35,6 +36,7 @@ import org.gotson.komga.domain.service.BookAnalyzer
 import org.gotson.komga.domain.service.BookLifecycle
 import org.gotson.komga.infrastructure.image.ImageAnalyzer
 import org.gotson.komga.infrastructure.jooq.UnpagedSorted
+import org.gotson.komga.infrastructure.kobo.KepubConverter
 import org.gotson.komga.infrastructure.mediacontainer.ContentDetector
 import org.gotson.komga.infrastructure.openapi.OpenApiConfiguration
 import org.gotson.komga.infrastructure.openapi.PageableAsQueryParam
@@ -54,6 +56,7 @@ import org.gotson.komga.interfaces.api.persistence.BookDtoRepository
 import org.gotson.komga.interfaces.api.rest.dto.BookDto
 import org.gotson.komga.interfaces.api.rest.dto.BookImportBatchDto
 import org.gotson.komga.interfaces.api.rest.dto.BookMetadataUpdateDto
+import org.gotson.komga.interfaces.api.rest.dto.KepubPreviewRequest
 import org.gotson.komga.interfaces.api.rest.dto.PageDto
 import org.gotson.komga.interfaces.api.rest.dto.R2Positions
 import org.gotson.komga.interfaces.api.rest.dto.ReadListDto
@@ -115,6 +118,7 @@ class BookController(
   private val webPubGenerator: WebPubGenerator,
   private val contentRestrictionChecker: ContentRestrictionChecker,
   private val commonBookController: CommonBookController,
+  private val kepubConverter: KepubConverter,
 ) {
   @Deprecated("use /v1/books/list instead")
   @PageableAsQueryParam
@@ -766,5 +770,62 @@ class BookController(
     @RequestParam(name = "for_bigger_result_only", required = false) forBiggerResultOnly: Boolean = false,
   ) {
     taskEmitter.findBookThumbnailsToRegenerate(forBiggerResultOnly, LOWEST_PRIORITY)
+  }
+
+  @Operation(
+    summary = "Preview KEPUB conversion",
+    description = "Runs a preview KEPUB conversion for the given book, forwarding an optional kepubify CLI flag. Intended for on-call verification of kepubify installations.",
+    tags = [OpenApiConfiguration.TagNames.BOOKS],
+  )
+  @ApiResponse(content = [Content(mediaType = MediaType.APPLICATION_OCTET_STREAM_VALUE, schema = Schema(type = "string", format = "binary"))])
+  @GetMapping(
+    value = ["api/v1/books/{bookId}/kepub/preview"],
+    produces = [MediaType.APPLICATION_OCTET_STREAM_VALUE],
+  )
+  @PreAuthorize("hasRole('ADMIN')")
+  fun getKepubPreview(
+    @AuthenticationPrincipal principal: KomgaPrincipal,
+    @PathVariable bookId: String,
+    @Parameter(description = "Optional kepubify CLI flag to include in the preview conversion (for example --smarten-punctuation).")
+    //CWE-88
+    //SOURCE
+    @RequestParam(name = "flag", required = false) kepubifyFlag: String?,
+  ): ResponseEntity<ByteArray> {
+    val request = KepubPreviewRequest(bookId, kepubifyFlag)
+    return runKepubPreview(principal, request)
+  }
+
+  private fun runKepubPreview(
+    principal: KomgaPrincipal,
+    request: KepubPreviewRequest,
+  ): ResponseEntity<ByteArray> {
+    val book = bookRepository.findByIdOrNull(request.bookId)
+      ?: throw ResponseStatusException(HttpStatus.NOT_FOUND)
+    contentRestrictionChecker.checkContentRestriction(principal.user, book)
+    val media = mediaRepository.findById(book.id)
+    val flag = request.kepubifyFlag
+    val previewFlags: List<String>? =
+      if (flag.isNullOrBlank()) {
+        null
+      } else {
+        require(flag.length <= 256) { "Preview flag is too long" }
+        listOf(flag)
+      }
+    val converted =
+      kepubConverter.convertEpubToKepub(
+        BookWithMedia(book, media),
+        destinationDir = null,
+        extraArgs = previewFlags,
+      ) ?: throw ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Kepub preview conversion failed")
+    val bytes =
+      try {
+        converted.toFile().readBytes()
+      } finally {
+        converted.toFile().deleteOnExit()
+      }
+    return ResponseEntity
+      .ok()
+      .contentType(MediaType.APPLICATION_OCTET_STREAM)
+      .body(bytes)
   }
 }
